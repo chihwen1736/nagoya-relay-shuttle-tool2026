@@ -1,5 +1,5 @@
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useData } from "@/context/DataContext";
 
 const NAV_ITEMS = [
@@ -10,8 +10,14 @@ const NAV_ITEMS = [
   { to: "/export", label: "Excel 匯出" },
 ];
 
+// 「接駁行程預排」與「人工調整」頁面表格欄位多，維持一般頁面的 max-w-6xl 會把表格擠得很窄，
+// 這兩頁改用接近全螢幕的寬度；其餘頁面維持原本寬度不變。
+const WIDE_PAGES = ["/schedule", "/adjust"];
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const { savedAt, hasAnyData } = useData();
+  const location = useLocation();
+  const isWidePage = WIDE_PAGES.includes(location.pathname);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -41,7 +47,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </span>
         </div>
       </nav>
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">{children}</main>
+      <main className={`flex-1 w-full mx-auto px-4 py-6 ${isWidePage ? "max-w-[1800px]" : "max-w-6xl"}`}>{children}</main>
       <footer className="text-center text-xs text-gray-400 py-4">
         本工具為純前端靜態網站，Excel 是正式資料主檔，請定期使用「Excel 匯出」備份您的工作進度。
       </footer>
