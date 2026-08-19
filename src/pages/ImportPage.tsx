@@ -6,6 +6,7 @@ import { buildBlankTemplateWorkbook, buildExampleWorkbook, workbookToBlob } from
 import { triggerBlobDownload } from "@/lib/download";
 import { computeMergePlan, applyMergePlan, ConflictResolution } from "@/excel/merge";
 import { WorkingData } from "@/types";
+import { isDateInRange } from "@/lib/time";
 
 const BLANK_TEMPLATE_FILENAME = "2026名古屋亞帕運中繼站管理系統_空白範本.xlsx";
 const EXAMPLE_DATA_FILENAME = "2026名古屋亞帕運中繼站管理系統_範例資料.xlsx";
@@ -20,6 +21,101 @@ async function downloadExampleData() {
   const wb = await buildExampleWorkbook();
   const blob = await workbookToBlob(wb);
   triggerBlobDownload(blob, EXAMPLE_DATA_FILENAME);
+}
+
+// 依照 YYYY-MM-DD 日期產生 RYYMMDD- 前綴，例如 2026-10-19 → "R261019-"
+function reservationNoPrefix(dateStr: string): string {
+  const yy = dateStr.slice(2, 4);
+  const mm = dateStr.slice(5, 7);
+  const dd = dateStr.slice(8, 10);
+  return `R${yy}${mm}${dd}-`;
+}
+
+// 只負責「產生／複製編號」，不會寫回 data、不會新增或修改任何預約資料——
+// Excel 依然是唯一的正式資料來源，產生出來的編號要由使用者自行填入 Excel。
+function ReservationNumberGenerator() {
+  const { data } = useData();
+  const [date, setDate] = useState("");
+  const [generated, setGenerated] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  function generate() {
+    setGenerated("");
+    setError("");
+    setCopied(false);
+    if (!date) return;
+    const { event_start_date, event_end_date } = data.settings;
+    if (!isDateInRange(date, event_start_date, event_end_date)) {
+      setError(`預約日期須介於系統設定的活動日期範圍內（${event_start_date} ～ ${event_end_date}）`);
+      return;
+    }
+    const prefix = reservationNoPrefix(date);
+    let maxSeq = 0;
+    for (const r of data.reservations) {
+      if (!r.reservation_no.startsWith(prefix)) continue;
+      const seqPart = r.reservation_no.slice(prefix.length);
+      const n = Number(seqPart);
+      if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+    }
+    const nextSeq = String(maxSeq + 1).padStart(3, "0");
+    setGenerated(`${prefix}${nextSeq}`);
+  }
+
+  async function copyGenerated() {
+    if (!generated) return;
+    try {
+      await navigator.clipboard.writeText(generated);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API 在少數環境（例如非 HTTPS）可能無法使用，提供後備方案讓使用者手動複製
+      window.prompt("請手動複製以下預約單編號：", generated);
+    }
+  }
+
+  return (
+    <section className="bg-white rounded-xl shadow p-4 space-y-3">
+      <h2 className="font-semibold">預約單編號產生器</h2>
+      <p className="text-sm text-gray-600">
+        選擇預約日期後，系統會依照目前已匯入的預約資料，找出當天最大的流水號並產生下一個可用編號（格式：RYYMMDD-XXX，例如 2026-10-19
+        的第一張是 R261019-001）。這裡只負責產生與複製編號，<b>不會</b>直接修改 Excel，也<b>不會</b>直接新增預約資料——請將編號複製後，自行填入 Excel 的「預約資料」工作表。
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-sm mb-1 text-gray-500">預約日期</label>
+          <input
+            type="date"
+            value={date}
+            min={data.settings.event_start_date}
+            max={data.settings.event_end_date}
+            onChange={(e) => {
+              setDate(e.target.value);
+              setGenerated("");
+              setError("");
+              setCopied(false);
+            }}
+            className="border rounded-lg px-3 py-2"
+          />
+        </div>
+        <button onClick={generate} disabled={!date} className="bg-brand-600 text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">
+          產生編號
+        </button>
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      {generated && (
+        <div className="border rounded-lg p-3 bg-brand-50 flex items-center gap-3 flex-wrap">
+          <span className="font-mono text-lg font-bold text-brand-700">{generated}</span>
+          <button onClick={copyGenerated} className="border border-brand-500 text-brand-600 rounded-lg px-3 py-1.5 text-sm">
+            {copied ? "已複製 ✓" : "複製編號"}
+          </button>
+        </div>
+      )}
+      <p className="text-xs text-gray-500">
+        提醒：同一張預約如包含派車、治療防護等多項服務，請各服務分列填寫，但使用相同的預約單編號；同一預約單編號＋同一服務項目重複出現，匯入時仍會提示錯誤。
+      </p>
+    </section>
+  );
 }
 
 type Stage = "idle" | "validated-ok" | "validated-error" | "choose-mode" | "resolve-conflicts";
@@ -124,6 +220,8 @@ export default function ImportPage() {
           )}
         </div>
       </section>
+
+      <ReservationNumberGenerator />
 
       {stage === "validated-error" && (
         <section className="bg-white rounded-xl shadow p-4 space-y-3">
